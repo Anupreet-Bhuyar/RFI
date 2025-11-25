@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from io import BytesIO
 import re
 
 # ---------------------------------------------------------
@@ -11,7 +10,7 @@ import re
 st.set_page_config(page_title="RFI Dashboard", layout="wide")
 
 # ---------------------------------------------------------
-# CSS FOR BEAUTIFUL UI
+# CSS FOR UI
 # ---------------------------------------------------------
 st.markdown("""
 <style>
@@ -51,50 +50,44 @@ body { background-color: #F5F7FA; }
     margin: 3px;
     font-size: 12px;
 }
-
 </style>
 """, unsafe_allow_html=True)
 
-
 # ---------------------------------------------------------
-# CLEAN STATUS (REMOVE EMOJIS)
+# STATUS CLEANING
 # ---------------------------------------------------------
 def clean_status(x):
     if pd.isna(x):
         return "Not reviewed"
-
     x = str(x)
-    x = re.sub(r"[^\w\s]", "", x)  # remove emojis
+    x = re.sub(r"[^\w\s]", "", x)  # remove emojis/symbols
     x = x.strip().lower()
-
     if "closed" in x:
         return "Closed"
     if "review" in x:
         return "Not reviewed"
     return "Not reviewed"
 
-
 # ---------------------------------------------------------
-# LOAD AND FIX EACH SHEET
+# LOAD AND FIX SHEET
 # ---------------------------------------------------------
 def load_sheet(df_raw):
-    # Row 0 contains headers
+    # first row is header row
     new_header = df_raw.iloc[0]
-    df = df_raw[1:]
+    df = df_raw[1:].copy()
     df.columns = new_header
     df = df.reset_index(drop=True)
 
-    # Normalize column names
-    df.columns = [str(x).strip().lower() for x in df.columns]
+    # normalize column names
+    df.columns = [str(c).strip().lower() for c in df.columns]
 
-    # Fix STATUS
+    # ensure status column exists
     if "status" in df.columns:
         df["status"] = df["status"].apply(clean_status)
     else:
         df["status"] = "Not reviewed"
 
     return df
-
 
 # ---------------------------------------------------------
 # STATS
@@ -103,33 +96,29 @@ def compute_stats(df):
     total = len(df)
     closed = (df["status"] == "Closed").sum()
     pending = (df["status"] == "Not reviewed").sum()
-    progress = closed / total if total else 0
+    progress = closed / total if total else 0.0
     return total, closed, pending, progress
 
-
 # ---------------------------------------------------------
-# TITLE
+# UI HEADER
 # ---------------------------------------------------------
 st.markdown("<div class='title'>RFI Progress Dashboard</div>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 
-
 # ---------------------------------------------------------
-# MAIN RENDERING
+# MAIN
 # ---------------------------------------------------------
 if uploaded_file:
-
     sheets = pd.read_excel(uploaded_file, sheet_name=None)
 
     for sheet_name, df_raw in sheets.items():
-
         df = load_sheet(df_raw)
         total, closed, pending, progress = compute_stats(df)
 
-        st.markdown(f"<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.subheader(f"📄 {sheet_name}")
 
-        # BADGES
+        # badges
         st.markdown(
             f"""
             <span class='badge badge-green'>Closed: {closed}</span>
@@ -144,9 +133,9 @@ if uploaded_file:
         with col1:
             st.write("**Progress**")
             st.progress(progress)
-            st.write(f"### {int(progress*100)}%")
+            st.write(f"### {int(progress * 100)}%")
 
-        # -------- GAUGE --------
+        # -------- GAUGE (unique key) --------
         with col2:
             fig_gauge = go.Figure(
                 go.Indicator(
@@ -159,10 +148,15 @@ if uploaded_file:
                     },
                 )
             )
-            fig_gauge.update_layout(height=250)
-            st.plotly_chart(fig_gauge, use_container_width=True)
+            fig_gauge.update_layout(height=250, margin=dict(t=10, b=10, l=10, r=10))
+            st.write("**Completion Gauge**")
+            st.plotly_chart(
+                fig_gauge,
+                use_container_width=True,
+                key=f"{sheet_name}_gauge"
+            )
 
-        # -------- PIE CHART --------
+        # -------- PIE (unique key) --------
         with col3:
             pie_df = pd.DataFrame(
                 {
@@ -178,17 +172,21 @@ if uploaded_file:
                 color_discrete_map={"Closed": "green", "Not reviewed": "red"},
                 hole=0.45,
             )
-            fig_pie.update_layout(height=250)
-            st.plotly_chart(fig_pie, use_container_width=True)
+            fig_pie.update_layout(height=250, margin=dict(t=10, b=10, l=10, r=10))
+            st.write("**Status Breakdown**")
+            st.plotly_chart(
+                fig_pie,
+                use_container_width=True,
+                key=f"{sheet_name}_pie"
+            )
 
         # -------- STATUS CHIPS --------
         st.write("**Status values detected:**")
         unique_status = df["status"].unique()
-        chips = "".join(
-            [f"<span class='chip'>{x}</span>" for x in unique_status]
+        chips_html = "".join(
+            f"<span class='chip'>{s}</span>" for s in unique_status
         )
-        st.markdown(chips, unsafe_allow_html=True)
+        st.markdown(chips_html, unsafe_allow_html=True)
 
         st.write(f"**Total RFIs:** {total}")
-
         st.markdown("</div>", unsafe_allow_html=True)
