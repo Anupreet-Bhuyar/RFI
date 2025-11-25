@@ -2,21 +2,70 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from fpdf import FPDF
 from io import BytesIO
 import re
 
+# ---------------------------------------------------------
+# PAGE CONFIG
+# ---------------------------------------------------------
 st.set_page_config(page_title="RFI Dashboard", layout="wide")
 
-# ----------------------------------------------------
-# CLEAN STATUS FUNCTION (remove emojis)
-# ----------------------------------------------------
+# ---------------------------------------------------------
+# CSS FOR BEAUTIFUL UI
+# ---------------------------------------------------------
+st.markdown("""
+<style>
+body { background-color: #F5F7FA; }
+
+.card {
+    background: white;
+    padding: 22px 28px;
+    border-radius: 16px;
+    margin-bottom: 25px;
+    box-shadow: 0px 4px 14px rgba(0,0,0,0.06);
+}
+
+.title {
+    font-size: 36px;
+    font-weight: 700;
+}
+
+.badge {
+    padding: 6px 14px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 13px;
+    margin-right: 8px;
+    color: white;
+}
+
+.badge-green { background: #28A745; }
+.badge-red { background: #DC3545; }
+.badge-yellow { background: #FFC107; color: black; }
+
+.chip {
+    display: inline-block;
+    padding: 4px 12px;
+    background: #EFEFEF;
+    border-radius: 10px;
+    margin: 3px;
+    font-size: 12px;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------
+# CLEAN STATUS (REMOVE EMOJIS)
+# ---------------------------------------------------------
 def clean_status(x):
     if pd.isna(x):
         return "Not reviewed"
+
     x = str(x)
-    x = re.sub(r"[^\w\s]", "", x).strip()   # remove emojis/symbols
-    x = x.lower()
+    x = re.sub(r"[^\w\s]", "", x)  # remove emojis
+    x = x.strip().lower()
 
     if "closed" in x:
         return "Closed"
@@ -24,109 +73,104 @@ def clean_status(x):
         return "Not reviewed"
     return "Not reviewed"
 
-# ----------------------------------------------------
-# LOAD & FIX EACH SHEET
-# ----------------------------------------------------
-def load_fixed_sheet(df):
-    # Row 0 contains labels like "RFI ID", "FLOOR NAME", ...
-    new_header = df.iloc[0]
-    df = df[1:]                 # drop header row
-    df.columns = new_header     # set correct header names
+
+# ---------------------------------------------------------
+# LOAD AND FIX EACH SHEET
+# ---------------------------------------------------------
+def load_sheet(df_raw):
+    # Row 0 contains headers
+    new_header = df_raw.iloc[0]
+    df = df_raw[1:]
+    df.columns = new_header
     df = df.reset_index(drop=True)
 
-    # Force lowercase column names
-    df.columns = [str(c).strip().lower() for c in df.columns]
+    # Normalize column names
+    df.columns = [str(x).strip().lower() for x in df.columns]
 
-    # Ensure status exists
-    if "status" not in df.columns:
-        raise Exception("STATUS column missing")
-
-    # Clean status
-    df["status"] = df["status"].apply(clean_status)
+    # Fix STATUS
+    if "status" in df.columns:
+        df["status"] = df["status"].apply(clean_status)
+    else:
+        df["status"] = "Not reviewed"
 
     return df
 
-# ----------------------------------------------------
-# COMPUTE STATS
-# ----------------------------------------------------
+
+# ---------------------------------------------------------
+# STATS
+# ---------------------------------------------------------
 def compute_stats(df):
     total = len(df)
     closed = (df["status"] == "Closed").sum()
     pending = (df["status"] == "Not reviewed").sum()
-
     progress = closed / total if total else 0
-
     return total, closed, pending, progress
 
-# ----------------------------------------------------
-# PDF EXPORT
-# ----------------------------------------------------
-def generate_pdf():
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=14)
-    pdf.cell(200, 10, txt="RFI Dashboard Summary Report", ln=True)
 
-    pdf_bytes = pdf.output(dest='S').encode("latin-1")
-    return pdf_bytes
-
-# ----------------------------------------------------
-# UI
-# ----------------------------------------------------
-st.title("RFI Progress Dashboard")
+# ---------------------------------------------------------
+# TITLE
+# ---------------------------------------------------------
+st.markdown("<div class='title'>RFI Progress Dashboard</div>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 
+
+# ---------------------------------------------------------
+# MAIN RENDERING
+# ---------------------------------------------------------
 if uploaded_file:
+
     sheets = pd.read_excel(uploaded_file, sheet_name=None)
 
-    for sheet_name, raw_df in sheets.items():
+    for sheet_name, df_raw in sheets.items():
 
-        try:
-            df = load_fixed_sheet(raw_df)
-        except:
-            continue
-
+        df = load_sheet(df_raw)
         total, closed, pending, progress = compute_stats(df)
 
-        st.markdown("## 📄 " + sheet_name)
+        st.markdown(f"<div class='card'>", unsafe_allow_html=True)
+        st.subheader(f"📄 {sheet_name}")
 
-        # ---- Badges ----
+        # BADGES
         st.markdown(
             f"""
-            <span style='background:#28A745;padding:6px 14px;color:white;border-radius:12px;margin-right:8px;'>Closed: {closed}</span>
-            <span style='background:#DC3545;padding:6px 14px;color:white;border-radius:12px;'>Pending: {pending}</span>
+            <span class='badge badge-green'>Closed: {closed}</span>
+            <span class='badge badge-red'>Pending: {pending}</span>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = st.columns([1.2, 1, 1])
 
-        # Progress Bar
+        # -------- PROGRESS BAR --------
         with col1:
             st.write("**Progress**")
             st.progress(progress)
-            st.write(f"**{int(progress*100)}% complete**")
+            st.write(f"### {int(progress*100)}%")
 
-        # Gauge
+        # -------- GAUGE --------
         with col2:
-            fig = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=progress * 100,
-                number={"suffix": "%"},
-                gauge={"axis": {"range": [0, 100]},
-                       "bar": {"color": "#4A90E2"}}
-            ))
-            fig.update_layout(height=250)
-            st.plotly_chart(fig, use_container_width=True)
+            fig_gauge = go.Figure(
+                go.Indicator(
+                    mode="gauge+number",
+                    value=progress * 100,
+                    number={"suffix": "%"},
+                    gauge={
+                        "axis": {"range": [0, 100]},
+                        "bar": {"color": "#4A90E2"},
+                    },
+                )
+            )
+            fig_gauge.update_layout(height=250)
+            st.plotly_chart(fig_gauge, use_container_width=True)
 
-        # Pie Chart
+        # -------- PIE CHART --------
         with col3:
-            pie_df = pd.DataFrame({
-                "Status": ["Closed", "Not reviewed"],
-                "Count": [closed, pending]
-            })
-
-            pie = px.pie(
+            pie_df = pd.DataFrame(
+                {
+                    "Status": ["Closed", "Not reviewed"],
+                    "Count": [closed, pending],
+                }
+            )
+            fig_pie = px.pie(
                 pie_df,
                 names="Status",
                 values="Count",
@@ -134,13 +178,17 @@ if uploaded_file:
                 color_discrete_map={"Closed": "green", "Not reviewed": "red"},
                 hole=0.45,
             )
-            st.plotly_chart(pie, use_container_width=True)
+            fig_pie.update_layout(height=250)
+            st.plotly_chart(fig_pie, use_container_width=True)
 
-        st.write(f"**Total RFIs: {total}**")
+        # -------- STATUS CHIPS --------
+        st.write("**Status values detected:**")
+        unique_status = df["status"].unique()
+        chips = "".join(
+            [f"<span class='chip'>{x}</span>" for x in unique_status]
+        )
+        st.markdown(chips, unsafe_allow_html=True)
 
-    st.download_button(
-        "Download PDF Summary",
-        data=generate_pdf(),
-        file_name="RFI_Report.pdf",
-        mime="application/pdf"
-    )
+        st.write(f"**Total RFIs:** {total}")
+
+        st.markdown("</div>", unsafe_allow_html=True)
